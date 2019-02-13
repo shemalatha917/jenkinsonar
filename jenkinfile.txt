@@ -1,0 +1,38 @@
+node {
+		stage('init') {
+    		 	checkout([$class: 'GitSCM', branches: [[name: '*/master']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: '6ff98225-ff87-4efe-9d49-a0df0d4f1c05', url: 'https://github.com/shemalatha917/Antproject.git']]])
+		}
+		stage('SrcBuild') {
+			def ant_version = 'ANT1.9.13'
+				withEnv( ["PATH+MAVEN=${tool ant_version}/bin"] ) {
+					bat "ant clean compile"
+				}
+      			
+		}
+		stage('SonarQube analysis') {
+		// requires SonarQube Scanner 2.8+
+		env.JAVA_HOME = 'C:\\Program Files\\Java\\jdk1.8.0_192'
+		def scannerHome = tool 'SonarQube Scanner 3.2.0';
+			withSonarQubeEnv('Sonar') {
+				bat "${scannerHome}\\bin\\sonar-scanner -Dsonar.projectKey=antproject -Dsonar.login=admin -Dsonar.password=admin -Dsonar.language=java -Dsonar.sources=./src -Dsonar.java.binaries=./target"
+			}
+		powershell '''$sonarProps = convertfrom-stringdata (Get-Content ".\\.scannerwork\\report-task.txt" -raw)
+							$ceTaskUrl = $sonarProps.ceTaskUrl
+							$serverUrl = $sonarProps.serverUrl
+							DO {
+							$sonarScanner = Invoke-RestMethod -Uri "$ceTaskUrl"
+							$sonarTaskStatus = $sonarScanner.task.status
+							start-sleep 10
+							} while ($sonarTaskStatus -ne \'SUCCESS\')
+							$sonarAnalysisID = $sonarScanner.task.analysisId
+							$sonarQG = Invoke-RestMethod -Uri $serverUrl"/api/qualitygates/project_status?analysisId="$sonarAnalysisID
+							$sonarQGstatus = $sonarQG.projectstatus.status
+							if ($sonarQGstatus -eq \'ERROR\'){
+							echo "Creating JIRA"
+							$user = [System.Text.Encoding]::UTF8.GetBytes("hemalatha:hema12345")
+							$headers = @{Authorization = "Basic " + [System.Convert]::ToBase64String($user)}
+							$body = Get-Content ".\\data.txt"
+							Invoke-RestMethod -URI "http://localhost:8082/rest/api/2/issue/" -Method Post -Headers $headers  -ContentType "application/json" -Body $body
+						}'''
+  }
+}
